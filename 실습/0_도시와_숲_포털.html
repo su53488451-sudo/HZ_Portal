@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>도시와 숲 · Portal Lab</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#09111d;color:#f1f4f6;font-family:"HG꼬딕씨","HG꼬딕씨 60g","HG Ggothicssi","Noto Sans KR","Malgun Gothic",sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}video{display:none}canvas{touch-action:none}header{position:absolute;top:clamp(28px,6vh,72px);left:clamp(24px,5vw,80px);pointer-events:none;text-shadow:0 2px 24px #040a14}small{font-family:inherit;font-weight:500;letter-spacing:.18em;color:#b4c5d5;font-size:10px}small:before{content:'';display:inline-block;width:28px;height:1px;background:#b4c5d5;vertical-align:middle;margin-right:14px}h1{font-family:inherit;font-size:clamp(30px,3.5vw,54px);font-weight:700;letter-spacing:-.055em;line-height:1.36;margin:22px 0 18px;word-break:keep-all}p{color:#c3cfda;font-size:13px;line-height:1.9;font-weight:400;letter-spacing:-.015em;word-break:keep-all}footer{position:absolute;bottom:32px;left:clamp(24px,5vw,80px);right:clamp(24px,5vw,80px);display:flex;align-items:center;gap:12px;flex-wrap:wrap}button{font:inherit;font-size:12px;letter-spacing:.02em;border:1px solid #b9cfdf40;border-radius:30px;padding:13px 24px;background:#101e30cc;backdrop-filter:blur(16px);color:#fff4e6;cursor:pointer;transition:background .2s,transform .2s}button:hover{background:#28445ad9;transform:translateY(-2px)}button:focus-visible{outline:2px solid #d4e8d0;outline-offset:4px}button:first-child{background:linear-gradient(120deg,#e1eddc,#b1cebd);color:#142b23;box-shadow:0 4px 30px #96cbaa20}button:disabled{opacity:.5;cursor:wait}#status{font-size:12px;color:#bbccd8;margin-left:auto;max-width:430px;line-height:1.7;text-shadow:0 2px 8px #000}#hint{position:absolute;top:clamp(28px,6vh,72px);right:clamp(24px,5vw,80px);font-size:10px;letter-spacing:.15em;color:#acbfce}@media(max-width:600px){header{left:24px;top:28px}h1{font-size:32px}#hint{display:none}footer{left:24px;right:24px;bottom:24px;gap:10px}button{padding:12px 18px}#status{width:100%;margin-left:0;font-size:11px}}
+</style>
+<video id="camera" autoplay playsinline muted></video><canvas id="scene"></canvas>
+<header><small>PORTAL LAB / EXPERIMENT 01</small><h1>원을 그려,<br>다른 세계로.</h1><p>잠들지 않는 도시 너머, 고요한 숲으로.<br>마우스를 누른 채 원을 그리고 놓아보세요.</p></header>
+<div id="hint">MOVE TO EXPLORE &nbsp; / &nbsp; DRAW TO OPEN</div>
+
+<footer><button id="start">웹캠 켜기</button><button id="reset">포털 지우기</button><span id="status" role="status" aria-live="polite">원을 그려 포털을 여세요. 웹캠을 켜면 포털 안에 내 모습이 나타나요.</span></footer>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1.1675465747/selfie_segmentation.js" crossorigin="anonymous"></script>
+<script>
+// 카메라 영상은 메모리에서만 처리하며 녹화·업로드하지 않습니다.
+const canvas=document.querySelector('#scene'),ctx=canvas.getContext('2d'),video=document.querySelector('#camera'),status=document.querySelector('#status');
+let w,h,points=[],drawing=false,portal=null,activePointer=null,stream,cleanBackground=null,captureTimer=null;
+function resize(){w=innerWidth;h=innerHeight;const d=Math.min(devicePixelRatio,2);canvas.width=w*d;canvas.height=h*d;ctx.setTransform(d,0,0,d,0,0);portal=null;points=[];drawing=false;activePointer=null;}
+addEventListener('resize',resize);resize();
+// Input adapter: future hand landmarks can call beginStroke / moveStroke / endStroke.
+function beginStroke(x,y){points=[{x,y}];drawing=true;}
+function moveStroke(x,y){if(drawing&&Math.hypot(x-points.at(-1).x,y-points.at(-1).y)>3)points.push({x,y});}
+function endStroke(){if(!drawing)return;drawing=false;const result=recognizeCircle(points);if(result){portal={...result,born:performance.now()};status.textContent=stream?'포털 속에 들어왔어요. 카메라를 보며 움직여 보세요.':'포털이 열렸어요. 웹캠을 켜면 포털 안에 내 모습이 나타나요.';}else status.textContent='조금 더 둥글게, 시작점 가까이 돌아와 원을 완성해 주세요.';points=[];}
+function recognizeCircle(p){if(p.length<16)return null;const xs=p.map(q=>q.x),ys=p.map(q=>q.y),bw=Math.max(...xs)-Math.min(...xs),bh=Math.max(...ys)-Math.min(...ys),x=(Math.max(...xs)+Math.min(...xs))/2,y=(Math.max(...ys)+Math.min(...ys))/2,r=(bw+bh)/4;if(r<35||Math.min(bw,bh)/Math.max(bw,bh)<.65||Math.hypot(p[0].x-p.at(-1).x,p[0].y-p.at(-1).y)>r*.65)return null;let error=0,length=0,turn=0;for(let i=0;i<p.length;i++){error+=Math.abs(Math.hypot(p[i].x-x,p[i].y-y)-r);if(i){length+=Math.hypot(p[i].x-p[i-1].x,p[i].y-p[i-1].y);let a=Math.atan2(p[i].y-y,p[i].x-x)-Math.atan2(p[i-1].y-y,p[i-1].x-x);turn+=Math.atan2(Math.sin(a),Math.cos(a));}}return error/p.length/r<.23&&length/r>4.6&&length/r<9&&Math.abs(turn)>5?{x,y,r}:null;}
+canvas.addEventListener('pointerdown',e=>{if(activePointer!==null||e.button!==0)return;activePointer=e.pointerId;canvas.setPointerCapture(e.pointerId);beginStroke(e.clientX,e.clientY);});
+canvas.addEventListener('pointermove',e=>{if(e.pointerId===activePointer)moveStroke(e.clientX,e.clientY);});
+canvas.addEventListener('pointerup',e=>{if(e.pointerId!==activePointer)return;moveStroke(e.clientX,e.clientY);endStroke();activePointer=null;});
+canvas.addEventListener('pointercancel',()=>{drawing=false;points=[];activePointer=null;});
+document.querySelector('#reset').onclick=()=>{portal=null;points=[];status.textContent='새로운 원을 그려 포털을 열어보세요.';};
+document.querySelector('#start').onclick=async function(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;cleanBackground=null;portal=null;video.srcObject=null;this.textContent='웹캠 켜기';status.textContent='웹캠을 껐어요.';return;}this.disabled=true;try{if(!navigator.mediaDevices?.getUserMedia)throw Error('unsupported');stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});video.srcObject=stream;await video.play();this.textContent='웹캠 끄기';status.textContent='인물 분리 준비 중…';await prepareSegmentation();}catch(e){stream?.getTracks().forEach(t=>t.stop());stream=null;this.textContent='웹캠 다시 시도';status.textContent=e.name==='NotAllowedError'?'카메라 권한이 필요해요. 브라우저의 카메라 접근을 허용해 주세요.':'카메라 또는 인식 프로그램을 불러오지 못했어요. 인터넷 연결과 카메라를 확인하고 Chrome·Edge에서 다시 열어 주세요.';}finally{this.disabled=false;}};
+// Mirror and fit the whole camera view inside the portal, independent of its location.
+function drawPortalSelf(x,y,r,t){
+  if(!stream||!backgroundReady||video.readyState<2||!video.videoWidth)return;
+  const size=r*2,scale=Math.max(size/(backgroundReady?bw:video.videoWidth),size/(backgroundReady?bh:video.videoHeight));
+  const vw=(backgroundReady?bw:video.videoWidth)*scale,vh=(backgroundReady?bh:video.videoHeight)*scale;
+  ctx.save();
+  ctx.translate(x,y);ctx.scale(-1,1);
+  ctx.globalAlpha=.88;
+  ctx.filter='saturate(0.7) contrast(1.15)';
+  ctx.drawImage(backgroundReady?person:video,-vw/2,-vh/2,vw,vh);
+  ctx.filter='none';ctx.globalAlpha=1;
+  // Color the live reflection to make it feel part of the other world.
+  ctx.globalCompositeOperation='screen';
+  const tint=ctx.createLinearGradient(0,-r,0,r);
+  tint.addColorStop(0,'rgba(207,235,166,.12)');
+  tint.addColorStop(1,'rgba(62,146,83,.12)');
+  ctx.fillStyle=tint;ctx.fillRect(-r,-r,size,size);
+  ctx.globalCompositeOperation='source-over';
+  const shade=ctx.createRadialGradient(0,0,r*.45,0,0,r);
+  shade.addColorStop(0,'transparent');shade.addColorStop(1,'rgba(5,22,16,.5)');
+  ctx.fillStyle=shade;ctx.fillRect(-r,-r,size,size);
+  ctx.restore();
+}
+
+const background=document.createElement('canvas'),person=document.createElement('canvas'),sample=document.createElement('canvas'),mask=document.createElement('canvas');
+const bw=480,bh=360;
+for(const c of [background,person,sample,mask]){c.width=bw;c.height=bh;}
+const bc=background.getContext('2d'),pc=person.getContext('2d'),sc=sample.getContext('2d',{willReadFrequently:true}),mc=mask.getContext('2d',{willReadFrequently:true});
+let backgroundReady=false,segmenter=null,processing=false;
+const known=new Uint8Array(bw*bh);
+function drawCover(source){const scale=Math.max(w/source.width,h/source.height);ctx.save();ctx.translate(w,0);ctx.scale(-1,1);ctx.drawImage(source,(w-source.width*scale)/2,(h-source.height*scale)/2,source.width*scale,source.height*scale);ctx.restore();}
+async function prepareSegmentation(){
+ if(typeof SelfieSegmentation==='undefined')throw Error('model load');
+ if(!segmenter){segmenter=new SelfieSegmentation({locateFile:file=>'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1.1675465747/'+file});segmenter.setOptions({modelSelection:1});segmenter.onResults(updateBackground);}
+ known.fill(0);backgroundReady=false;
+ if(!processing)processCamera();
+}
+async function processCamera(){
+ if(!stream){processing=false;return;}processing=true;
+ try{await segmenter.send({image:video});}catch(e){status.textContent='인물 분리를 불러오지 못했어요. 인터넷 연결 후 웹캠을 다시 켜 주세요.';processing=false;return;}
+ setTimeout(processCamera,45);
+}
+function updateBackground(results){
+ sc.drawImage(results.image,0,0,bw,bh);mc.clearRect(0,0,bw,bh);mc.drawImage(results.segmentationMask,0,0,bw,bh);
+ const frame=sc.getImageData(0,0,bw,bh),m=mc.getImageData(0,0,bw,bh),out=bc.getImageData(0,0,bw,bh);
+ // Keep only confidently visible background pixels across frames.
+ for(let i=0;i<known.length;i++){const k=i*4;if(m.data[k]<20){known[i]=1;out.data[k]=frame.data[k];out.data[k+1]=frame.data[k+1];out.data[k+2]=frame.data[k+2];out.data[k+3]=255;}}
+ // Unknown areas borrow the nearest available room pixel in each row.
+ for(let y=0;y<bh;y++){let nearest=-1;const right=new Int32Array(bw);right.fill(-1);for(let x=bw-1;x>=0;x--){if(known[y*bw+x])nearest=x;right[x]=nearest;}let left=-1;for(let x=0;x<bw;x++){const i=y*bw+x,k=i*4;if(known[i]){left=x;continue;}const rx=right[x],nx=left<0?rx:rx<0?left:x-left<rx-x?left:rx;if(nx>=0){const q=(y*bw+nx)*4;out.data[k]=frame.data[q];out.data[k+1]=frame.data[q+1];out.data[k+2]=frame.data[q+2];}else{out.data[k]=70;out.data[k+1]=75;out.data[k+2]=80;}out.data[k+3]=255;}}
+ bc.putImageData(out,0,0);
+ pc.clearRect(0,0,bw,bh);pc.globalCompositeOperation='source-over';pc.drawImage(results.segmentationMask,0,0,bw,bh);pc.globalCompositeOperation='source-in';pc.drawImage(results.image,0,0,bw,bh);pc.globalCompositeOperation='source-over';
+ if(!backgroundReady)status.textContent='준비 완료! 원을 그려 초록빛 숲으로 들어가 보세요.';backgroundReady=true;
+}
+
+// A self-contained WebGL world: perspective ray marching, soft shadows and atmospheric light.
+// No models, textures, or additional network dependencies are needed for the landscape.
+const world=document.createElement('canvas');
+let gl=null,worldProgram=null,destinationProgram=null,worldUniforms={},destinationUniforms={},worldLost=false;
+const pointer={x:0,y:0},view={x:0,y:0};
+const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
+canvas.addEventListener('pointermove',e=>{pointer.x=e.clientX/Math.max(w,1)*2-1;pointer.y=e.clientY/Math.max(h,1)*2-1;});
+canvas.addEventListener('pointerleave',()=>{pointer.x=0;pointer.y=0;});
+const vertexSource=`attribute vec2 position;void main(){gl_Position=vec4(position,0.,1.);}`;
+const fragmentSource=`
+precision highp float;
+uniform vec2 resolution;
+uniform vec2 mouse;
+uniform float time;
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float box(vec3 p,vec3 b){vec3 q=abs(p)-b;return length(max(q,0.))+min(max(q.x,max(q.y,q.z)),0.);}
+float buildingHeight(vec2 id){return 3.+pow(hash(id+17.),1.35)*21.;}
+vec2 map(vec3 p){
+ vec2 result=vec2(p.y+1.,1.);
+ vec2 grid=floor(p.xz/4.);
+ // Four neighboring blocks prevent tall towers from disappearing at cell boundaries.
+ for(int i=0;i<2;i++)for(int j=0;j<2;j++){
+  vec2 id=grid+vec2(float(i),float(j)),center=id*4.;
+  if(abs(center.x)<2.)continue;
+  float seed=hash(id),height=buildingHeight(id);
+  vec3 q=p-vec3(center.x,height*.5-1.,center.y);
+  vec2 width=vec2(1.15+seed*.5,.95+hash(id+6.)*.6);
+  float d=box(q,vec3(width.x,height*.5,width.y));
+  float roof=box(p-vec3(center.x,height-.65,center.y),vec3(width*.55,.4).xzy);
+  d=min(d,roof);
+  if(seed>.72){
+   float antenna=max(length(p.xz-center)-.035,abs(p.y-height-.75)-1.1);
+   d=min(d,antenna);
+  }
+  if(d<result.x)result=vec2(d,2.);
+ }
+ return result;
+}
+vec3 normalAt(vec3 p){vec2 e=vec2(.009,0.);return normalize(vec3(map(p+e.xyy).x-map(p-e.xyy).x,map(p+e.yxy).x-map(p-e.yxy).x,map(p+e.yyx).x-map(p-e.yyx).x));}
+vec3 sky(vec3 rd){
+ float horizon=exp(-max(rd.y,0.)*5.);
+ vec3 col=mix(vec3(.008,.016,.04),vec3(.095,.12,.19),horizon);
+ vec3 moon=normalize(vec3(.38,.48,-1.));float md=length(rd-moon);
+ col+=vec3(.6,.72,.9)*(1.-smoothstep(.034,.037,md));
+ col+=vec3(.02,.035,.07)*exp(-md*8.);
+ float cloud=.5+.5*sin(rd.x*13.+rd.z*7.+sin(rd.y*24.)+time*.015);
+ col+=vec3(.024,.028,.042)*cloud*exp(-abs(rd.y-.22)*5.);
+ return col;
+}
+void main(){
+ vec2 uv=(gl_FragCoord.xy-.5*resolution)/resolution.y;
+ vec3 ro=vec3(mouse.x*.5,13.7-mouse.y*.45,23.);
+ vec3 target=vec3(.7+mouse.x*.25,8.8-mouse.y*.2,-24.);
+ vec3 f=normalize(target-ro),right=normalize(cross(f,vec3(0.,1.,0.))),up=cross(right,f);
+ vec3 rd=normalize(f*1.35+right*uv.x+up*uv.y);
+ vec3 col=sky(rd);float travel=0.;vec2 hit=vec2(1.);
+ for(int i=0;i<126;i++){hit=map(ro+rd*travel);if(hit.x<.006||travel>110.)break;travel+=max(.008,hit.x*.9);}
+ if(travel<110.&&hit.x<.04){
+  vec3 p=ro+rd*travel,n=normalAt(p),light=normalize(vec3(-.4,.8,.25));
+  vec2 id=floor(p.xz/4.+.5);float seed=hash(id);
+  vec3 base=mix(vec3(.018,.028,.047),vec3(.045,.063,.09),seed);
+  col=base*(.5+max(dot(n,light),0.)*.65);
+  if(hit.y>1.5){
+   float side=mix(p.x,p.z,step(.5,abs(n.x)));
+   vec2 tile=vec2(side*3.2,p.y*2.05),local=fract(tile);
+   float pane=step(.19,local.x)*step(local.x,.79)*step(.2,local.y)*step(local.y,.75)*(1.-step(.5,n.y));
+   float lit=step(.38,hash(floor(tile)+id*19.));
+   vec3 windowColor=mix(vec3(.27,.57,.95),vec3(1.,.62,.26),step(.33,hash(id+31.)));
+   float office=.45+.55*hash(floor(tile)+7.);
+   col+=windowColor*pane*lit*office*1.25;
+   float trim=pow(max(0.,1.-abs(fract(p.y*.16)-.97)*25.),3.)*(1.-step(.5,n.y));
+   col+=vec3(.04,.12,.2)*trim*step(.65,seed);
+   float red=step(.96,seed)*step(buildingHeight(id)-.05,p.y);
+   col+=vec3(.8,.025,.02)*red*(.6+.4*sin(time*1.8));
+   col+=vec3(.13,.2,.3)*pow(max(dot(n,normalize(light-rd)),0.),48.);
+  }else{
+   float road=1.-smoothstep(1.3,1.9,abs(p.x));
+   float lane=(1.-smoothstep(.025,.06,abs(abs(p.x)-.8)))*step(.55,fract(p.z*.16));
+   col=mix(col,vec3(.025,.043,.07),road)+vec3(.19,.18,.12)*lane;
+   float trails=pow(max(0.,sin(p.z*.6+time*.9)),12.);
+   float cars=exp(-pow((p.x-.48)*13.,2.))+exp(-pow((p.x+.48)*13.,2.));
+   col+=mix(vec3(1.,.12,.04),vec3(.6,.8,1.),step(0.,p.x))*cars*trails;
+   col+=vec3(.08,.09,.12)*(.5+.5*sin(p.z*4.))*road;
+  }
+  col=mix(col,vec3(.075,.10,.155),1.-exp(-travel*.011));
+ }
+ col=pow(col/(1.+col),vec3(.4545));
+ vec2 screen=gl_FragCoord.xy/resolution;
+ col*=.78+.22*pow(max(0.,16.*screen.x*screen.y*(1.-screen.x)*(1.-screen.y)),.2);
+ col+=(hash(gl_FragCoord.xy)-.5)/255.;
+ gl_FragColor=vec4(col,1.);
+}`;
+// The destination has independent geometry, lighting, and camera, with a forest behind the city portal.
+const destinationFragmentSource=`
+precision highp float;
+uniform vec2 resolution;
+uniform vec2 mouse;
+uniform float time;
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float ground(vec2 p){return -.7+.14*sin(p.x*.65+p.y*.24)+.1*cos(p.y*.58);}
+float ellipsoid(vec3 p,vec3 r){return (length(p/r)-1.)*min(r.x,min(r.y,r.z));}
+vec2 map(vec3 p){
+ vec2 hit=vec2((p.y-ground(p.xz))*.75,1.);
+ vec2 grid=floor(p.xz/4.5);
+ for(int i=0;i<2;i++)for(int j=0;j<2;j++){
+  vec2 id=grid+vec2(float(i),float(j)),center=id*4.5;
+  if(abs(center.x)<2.)continue;
+  float seed=hash(id),height=5.5+seed*4.5;
+  center+=vec2(hash(id+3.)-.5,hash(id+8.)-.5)*.7;
+  vec3 q=p-vec3(center.x,-.7,center.y);
+  float trunk=max(length(q.xz)-(.2+seed*.12)*(1.-clamp(q.y/height,0.,1.)*.45),max(-q.y,q.y-height));
+  if(trunk<hit.x)hit=vec2(trunk,2.);
+  float leaves=ellipsoid(q-vec3(0.,height*.8,0.),vec3(2.1,2.0,1.85));
+  leaves=min(leaves,ellipsoid(q-vec3(-.9,height*.65,.35),vec3(1.6,1.35,1.5)));
+  leaves=min(leaves,ellipsoid(q-vec3(.8,height*.7,-.3),vec3(1.5,1.6,1.6)));
+  float texture=sin(q.x*6.+sin(q.z*4.))*sin(q.y*6.-q.z*5.)*.09;
+  leaves+=texture;
+  if(leaves<hit.x)hit=vec2(leaves*.75,3.);
+ }
+ return hit;
+}
+vec3 normalAt(vec3 p){vec2 e=vec2(.016,0.);return normalize(vec3(map(p+e.xyy).x-map(p-e.xyy).x,map(p+e.yxy).x-map(p-e.yxy).x,map(p+e.yyx).x-map(p-e.yyx).x));}
+float shadow(vec3 p,vec3 l){float s=1.,t=.1;for(int i=0;i<15;i++){float d=map(p+l*t).x;s=min(s,8.*d/t);t+=clamp(d,.08,1.2);if(d<.003||t>15.)break;}return clamp(s,.17,1.);}
+vec3 sky(vec3 rd){
+ float horizon=exp(-max(rd.y,0.)*3.);
+ vec3 col=mix(vec3(.10,.23,.22),vec3(.36,.49,.31),horizon);
+ vec3 sun=normalize(vec3(-.35,.65,-.7));float s=max(dot(rd,sun),0.);
+ col+=vec3(.72,.66,.34)*pow(s,32.)*.65;
+ col+=vec3(1.,.91,.6)*smoothstep(.999,.9997,s)*2.;
+ return col;
+}
+void main(){
+ vec2 uv=(gl_FragCoord.xy-.5*resolution)/resolution.y;
+ vec3 ro=vec3(mouse.x*.3,1.5-mouse.y*.15,7.5);
+ vec3 target=vec3(mouse.x*.15,2.1,-15.);
+ vec3 f=normalize(target-ro),right=normalize(cross(f,vec3(0.,1.,0.))),up=cross(right,f);
+ vec3 rd=normalize(f*1.12+right*uv.x+up*uv.y);
+ vec3 col=sky(rd);float travel=0.;vec2 hit=vec2(1.);
+ for(int i=0;i<110;i++){hit=map(ro+rd*travel);if(hit.x<.008||travel>80.)break;travel+=max(hit.x*.8,.008);}
+ if(travel<80.&&hit.x<.035){
+  vec3 p=ro+rd*travel,n=normalAt(p),light=normalize(vec3(-.35,.8,-.4));
+  float diff=max(dot(n,light),0.),sh=shadow(p+n*.05,light);
+  vec3 base;
+  if(hit.y>2.5){
+   float leaf=.5+.5*sin(p.x*9.+sin(p.z*7.))*sin(p.y*8.);
+   base=mix(vec3(.025,.10,.026),vec3(.13,.31,.055),leaf);
+   float back=pow(max(dot(rd,-light),0.),4.);
+   col=base*(.55+diff*sh*2.)+vec3(.12,.23,.035)*back;
+  }else if(hit.y>1.5){
+   float bark=.7+.3*sin(p.y*2.+p.x*32.+p.z*21.);
+   base=vec3(.13,.075,.037)*bark;col=base*(.6+diff*sh*1.5);
+  }else{
+   float path=1.-smoothstep(.6,1.7,abs(p.x-.3*sin(p.z*.25)));
+   float moss=.5+.5*sin(p.x*24.+sin(p.z*19.))*cos(p.z*17.);
+   base=mix(vec3(.035,.095,.025),vec3(.09,.16,.035),moss);
+   base=mix(base,vec3(.18,.135,.075)*(.9+.1*hash(floor(p.xz*90.))),path);
+   col=base*(.5+diff*sh*1.6);
+   float dapple=pow(max(0.,sin(p.x*2.2+p.z*.9)*sin(p.z*1.8-p.x)),6.);
+   col+=vec3(.19,.22,.07)*dapple*sh;
+  }
+  col=mix(col,vec3(.28,.40,.28),1.-exp(-travel*.024));
+ }
+ // Warm shafts between the tree crowns, softened by the forest mist.
+ float rays=pow(max(0.,sin(rd.x*28.+rd.y*14.+.1*sin(time*.1))),14.);
+ col+=vec3(.12,.14,.055)*rays*pow(max(dot(rd,normalize(vec3(-.35,.65,-.7))),0.),5.)*min(travel/15.,1.);
+ col=pow(col/(1.+col),vec3(.4545));
+ col+=(hash(gl_FragCoord.xy)-.5)/255.;
+ gl_FragColor=vec4(col,1.);
+}`;
+function initWorld(){
+ try{
+  gl=world.getContext('webgl',{alpha:false,antialias:false,preserveDrawingBuffer:true,powerPreference:'high-performance'});
+  if(!gl)return;
+  const compile=(type,source)=>{const shader=gl.createShader(type);gl.shaderSource(shader,source);gl.compileShader(shader);if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(shader));return shader;};
+  worldProgram=gl.createProgram();
+  const vs=compile(gl.VERTEX_SHADER,vertexSource),fs=compile(gl.FRAGMENT_SHADER,fragmentSource);
+  gl.attachShader(worldProgram,vs);gl.attachShader(worldProgram,fs);gl.bindAttribLocation(worldProgram,0,'position');gl.linkProgram(worldProgram);
+  gl.deleteShader(vs);gl.deleteShader(fs);
+  if(!gl.getProgramParameter(worldProgram,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(worldProgram));
+  gl.useProgram(worldProgram);
+  const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const attr=gl.getAttribLocation(worldProgram,'position');gl.enableVertexAttribArray(attr);gl.vertexAttribPointer(attr,2,gl.FLOAT,false,0,0);
+  for(const name of ['resolution','mouse','time'])worldUniforms[name]=gl.getUniformLocation(worldProgram,name);
+  destinationProgram=gl.createProgram();
+  const destinationVS=compile(gl.VERTEX_SHADER,vertexSource),destinationFS=compile(gl.FRAGMENT_SHADER,destinationFragmentSource);
+  gl.attachShader(destinationProgram,destinationVS);gl.attachShader(destinationProgram,destinationFS);gl.bindAttribLocation(destinationProgram,0,'position');gl.linkProgram(destinationProgram);
+  gl.deleteShader(destinationVS);gl.deleteShader(destinationFS);
+  if(!gl.getProgramParameter(destinationProgram,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(destinationProgram));
+  for(const name of ['resolution','mouse','time'])destinationUniforms[name]=gl.getUniformLocation(destinationProgram,name);
+ }catch(error){console.warn('3D background unavailable:',error);gl=null;worldProgram=null;destinationProgram=null;}
+}
+world.addEventListener('webglcontextlost',e=>{e.preventDefault();worldLost=true;});
+world.addEventListener('webglcontextrestored',()=>{worldLost=false;initWorld();});
+initWorld();
+let quality=1,lastWorldFrame=-Infinity,previousTime=0,slowFrames=0;
+function renderWorld(t){
+ if(gl&&worldProgram&&!worldLost){
+  const scale=Math.min(1,Math.sqrt(620000/Math.max(1,w*h)))*quality;
+  const ww=Math.max(1,Math.round(w*scale)),hh=Math.max(1,Math.round(h*scale));
+  if(world.width!==ww||world.height!==hh){world.width=ww;world.height=hh;}
+  gl.viewport(0,0,ww,hh);gl.useProgram(worldProgram);
+  gl.uniform2f(worldUniforms.resolution,ww,hh);gl.uniform2f(worldUniforms.mouse,view.x,view.y);gl.uniform1f(worldUniforms.time,reducedMotion.matches?0:t*.001);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  ctx.drawImage(world,0,0,w,h);
+ }else{
+  const bg=ctx.createLinearGradient(0,0,0,h);bg.addColorStop(0,'#091024');bg.addColorStop(.6,'#293c57');bg.addColorStop(1,'#0b1421');ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
+  // The fallback keeps the same city identity when WebGL is unavailable.
+  for(let layer=0;layer<3;layer++)for(let i=0;i<32;i++){
+   const seed=(Math.sin(i*127.1+layer*71.7)+1)*.5,bw=w/27,px=i*w/30-bw*.5,top=h*(.2+seed*.42+layer*.09);
+   ctx.fillStyle=['#233249','#182337','#0d1626'][layer];ctx.fillRect(px,top,bw,h-top);
+   for(let row=0;row<32;row++)for(let col=0;col<4;col++){
+    if(Math.sin(i*31+row*17+col*11+layer)<.1)continue;
+    ctx.fillStyle=i%3?'#d4ae72':'#8cb8de';ctx.globalAlpha=.25+layer*.15;ctx.fillRect(px+4+col*(bw-6)/4,top+8+row*12,Math.max(1,bw/10),3);
+   }ctx.globalAlpha=1;
+  }
+ }
+}
+function drawParticles(t){
+ ctx.save();ctx.globalCompositeOperation='screen';
+ for(let i=0;i<34;i++){
+  const depth=.3+(i%7)/7,x=((Math.sin(i*127.1)*.5+.5)*w+Math.sin(t*.00012+i)*22*depth+w)%w;
+  const y=((i*97.7-t*.004*depth)%h+h)%h;
+  ctx.globalAlpha=(.15+.15*Math.sin(i+t*.0007))*depth;
+  ctx.strokeStyle='#a5c9e0';ctx.lineWidth=.6;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-2*depth,y+9*depth);ctx.stroke();
+ }ctx.restore();
+}
+function drawOpenPortal(t){
+ const{x,y,r,born}=portal,open=Math.min(1,(t-born)/650),R=r*(1-Math.pow(1-open,3));
+ if(R<.1)return;
+ ctx.save();ctx.beginPath();ctx.arc(x,y,R,0,Math.PI*2);ctx.clip();
+ if(gl&&destinationProgram&&!worldLost){
+  // Reuse the WebGL buffer after the exterior has been copied onto the main canvas.
+  // Only a small square is rendered for the portal; the full-screen world stays untouched.
+  const side=Math.max(1,Math.min(world.width,world.height,512,Math.ceil(r*2)));
+  gl.viewport(0,0,side,side);gl.useProgram(destinationProgram);
+  gl.uniform2f(destinationUniforms.resolution,side,side);gl.uniform2f(destinationUniforms.mouse,view.x,view.y);
+  gl.uniform1f(destinationUniforms.time,reducedMotion.matches?0:t*.001);gl.drawArrays(gl.TRIANGLES,0,3);
+  ctx.drawImage(world,0,world.height-side,side,side,x-r,y-r,r*2,r*2);
+ }else{
+  const sky=ctx.createLinearGradient(x,y-r,x,y+r);sky.addColorStop(0,'#79917a');sky.addColorStop(.6,'#3e6849');sky.addColorStop(1,'#153725');
+  ctx.fillStyle=sky;ctx.fillRect(x-r,y-r,r*2,r*2);
+  ctx.fillStyle='#787656';ctx.beginPath();ctx.moveTo(x-r*.08,y);ctx.lineTo(x+r*.08,y);ctx.lineTo(x+r*.6,y+r);ctx.lineTo(x-r*.6,y+r);ctx.fill();
+  for(let layer=0;layer<3;layer++)for(let i=0;i<10;i++){
+   const px=x+(i<5?-1:1)*r*(.18+(i%5)*.22),py=y+r*(.12+layer*.32),size=r*(.23+layer*.09);
+   ctx.fillStyle=['#536d4e','#304f32','#183923'][layer];ctx.fillRect(px-size*.1,py-r*1.4,size*.2,r*1.5);
+   for(let k=0;k<3;k++){ctx.beginPath();ctx.ellipse(px+Math.sin(i+k)*size*.4,py-r*(.9+k*.24),size*(.9+k*.1),size*.7,0,0,Math.PI*2);ctx.fill();}
+  }
+ }
+ const light=ctx.createRadialGradient(x,y-r*.25,0,x,y,r);
+ light.addColorStop(0,'#e4f2c908');light.addColorStop(.7,'#8acb8608');light.addColorStop(1,'#061e13aa');ctx.fillStyle=light;ctx.fillRect(x-r,y-r,2*r,2*r);
+ drawPortalSelf(x,y,r,t);ctx.restore();
+ ctx.save();ctx.globalAlpha=open;
+ for(const [width,blur,color] of [[8,38,'#88bf9a55'],[3,18,'#c2e4c1'],[1,4,'#f1f7df']]){
+  ctx.strokeStyle=color;ctx.shadowColor='#a7d7a0';ctx.shadowBlur=blur;ctx.lineWidth=width;ctx.beginPath();ctx.arc(x,y,R,0,Math.PI*2);ctx.stroke();
+ }
+ ctx.shadowBlur=8;
+ for(let i=0;i<65;i++){const a=i*2.399+t*.0003,rr=R+Math.sin(i*8+t*.002)*9;ctx.fillStyle=i%3?'#c4e8b5':'#f5f3d6';ctx.beginPath();ctx.arc(x+Math.cos(a)*rr,y+Math.sin(a)*rr,1+Math.sin(i)*.6,0,7);ctx.fill();}
+ ctx.restore();
+}
+function frame(t){
+ requestAnimationFrame(frame);
+ if(document.hidden)return;
+ // Cap at 30fps and reduce resolution if the device cannot sustain it.
+ if(t-lastWorldFrame<32)return;
+ if(previousTime&&t-previousTime>65){if(++slowFrames>25){quality=Math.max(.55,quality*.85);slowFrames=0;}}else slowFrames=Math.max(0,slowFrames-1);
+ previousTime=t;lastWorldFrame=t;
+ view.x+=(pointer.x-view.x)*.055;view.y+=(pointer.y-view.y)*.055;
+ const sceneTime=reducedMotion.matches?0:t;
+ if(reducedMotion.matches){view.x=0;view.y=0;}
+ ctx.clearRect(0,0,w,h);renderWorld(sceneTime);drawParticles(sceneTime);
+ // Keep text readable without flattening the 3D scene.
+ const scrim=ctx.createLinearGradient(0,0,w*.65,0);scrim.addColorStop(0,'#080b1166');scrim.addColorStop(1,'#080b1100');ctx.fillStyle=scrim;ctx.fillRect(0,0,w,h);
+ if(portal)drawOpenPortal(t);
+ if(points.length){ctx.save();ctx.strokeStyle='#dbf3d0';ctx.lineWidth=3;ctx.lineCap='round';ctx.shadowColor='#a4d7a1';ctx.shadowBlur=14;ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();ctx.restore();}
+}
+requestAnimationFrame(frame);
+
+</script>
+</html>
