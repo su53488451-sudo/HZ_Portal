@@ -1,0 +1,16 @@
+Edit the provided two-panel exhibition design comparison image. Output ONE two-panel board with two stacked landscape 16:9 screens, same proportions as input. This is a precise UI art-direction revision.
+
+CRITICAL: Preserve the ENTIRE BOTTOM PANEL (the bright ice-blue final WHAT REMAINS poster) unchanged: its white/ice backdrop, all abstract imagery, typography, placement and colors. Do not darken or redesign the bottom panel.
+
+ONLY redesign TOP PANEL, the welcome UI, into a polished DARK counterpart of the light ice-blue identity. Deep blue-slate and petrol navy gradient, definitely colored not black, fine subtle photographic grain. Reuse diffused dark-cyan abstract motion exposures mainly at lower right and along edges; center remains quiet and legible. No literal human heads/arms, no fabric folds, no neon tubes.
+
+Top panel typography/layout: professional precise editorial grid, generous margins (8-10%), consistent alignment, orderly vertical rhythm, no crowded lines. Thin ivory high-contrast serif English exhibition wordmark WHAT above REMAINS, large but balanced, with small Korean subtitle "움직임의 잔상" immediately below. Center this wordmark group around upper-middle. Typeface for Korean instructions is clean modern readable sans serif, not decorative.
+Remove "참여형 미디어 아트" completely. Replace that upper header region with a single neat centered horizontal participation sequence:
+"01 손을 들어 시작"    "02 10초의 움직임"    "03 하나의 풍경"
+Separate steps with short fine hairline rules, no icons or boxes. This is the top header, high enough to be seen, approximately 12% from panel top.
+At approximately 58% panel height, primary bold instruction EXACTLY "한 손을 머리 위로 들어 주세요".
+Below it, smaller "잠시 유지하면 시작됩니다".
+Below with a clear gap, supporting line "10초 동안 자유롭게 움직여 보세요."
+These instructions must be instantly readable, but the big English wordmark is still the main title. Compact aligned text stack, no excessive tracking, no crowded rows.
+Restore restrained footer at approximately 87% height: left aligned small two-line caption EXACTLY "몸짓은 사라져도" / "형태는 남는다." (the existing website caption). Right aligned count "0000" with small adjacent "누적 참여 인원". Participation starts at zero. Footer baseline coordinated with modest fine rule, all safely inset from edges. Do not add UI buttons or operator controls.
+Overall refined museum/media-art visual identity. Cool ivory typography on dark blue, very subtle cyan glow, no beige. Bottom panel MUST remain the original bright poster with no welcome instructions or footer added. No external labels or mockup surroundings.
