@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko"><meta charset="utf-8"><title>민트 잔상 렌더링 비교</title>
+<style>body{margin:20px;background:#e4f6ef;color:#163b32;font:14px system-ui}h1{font-size:20px}h2{font-size:16px}canvas{display:block;width:min(100%,1200px);height:auto;margin-bottom:28px}#status{padding:8px 0}</style>
+<h1>실제 외곽 / 이전 기록 표현 비교</h1>
+<p>Google 공개 테스트 사진의 외곽입니다. 같은 자세를 크기와 색만 바꾸어 비교하며, 실제 참여 기록이나 인원에는 저장하지 않습니다.</p>
+<p id="status">실제 MediaPipe 모델을 준비하는 중…</p>
+<h2>실제 사람 마스크 · 새 참여 방식</h2><canvas id="captured" width="1672" height="941"></canvas>
+<h2>자세 좌표 · 이전 기록 및 리허설 보조 방식</h2><canvas id="legacy" width="1672" height="941"></canvas>
+<script type="module">
+import {FilesetResolver,PoseLandmarker} from '../assets/vision_bundle.mjs';
+import {packSilhouette} from '../silhouette.mjs';
+import {captureFrame,createMotionRecord,renderBody,demoFrames} from '../motion.mjs';
+import {loadScene,scene} from '../scene.mjs';
+const status=document.querySelector('#status');let model;
+try{
+  await loadScene();
+  const html=await (await fetch('./silhouette-check.html')).text();
+  const source=new Image();source.src=new DOMParser().parseFromString(html,'text/html').querySelector('#source').getAttribute('src');await source.decode();
+  const files=await FilesetResolver.forVisionTasks('../assets/wasm');
+  model=await PoseLandmarker.createFromOptions(files,{baseOptions:{modelAssetPath:'../assets/pose_landmarker_lite.task',delegate:'GPU'},runningMode:'IMAGE',numPoses:1,outputSegmentationMasks:true});
+  const result=model.detect(source),mask=result.segmentationMasks?.[0];
+  if(!mask||!result.landmarks[0])throw Error('테스트 사진의 전경을 읽지 못했습니다.');
+  const shape=packSilhouette(mask.getAsFloat32Array(),mask.width,mask.height,source.naturalWidth/source.naturalHeight);
+  const frame=captureFrame(result.landmarks[0],0);result.close();
+  if(!shape||!frame)throw Error('테스트 외곽 또는 자세가 없습니다.');
+  const real=createMotionRecord(Array.from({length:126},(_,i)=>({...frame,t:i*80,shape})),0);
+  const legacy=createMotionRecord(demoFrames(),0);
+  for(const [id,record] of [['captured',real],['legacy',legacy]]){
+    const canvas=document.querySelector('#'+id),c=canvas.getContext('2d');scene(c,1672,941,0,1,'2');
+    for(let index=0;index<10;index++)renderBody(c,{...record,index,seed:index*.137},1672,941,5000,1,'2');
+  }
+  status.textContent='완료 · 실제 모델 외곽과 보조 윤곽을 같은 배경·크기 분포로 표시했습니다.';
+  document.title='PASS — 민트 외곽 렌더링 비교';
+}catch(e){status.textContent='검사 실패: '+e.message;document.title='FAIL — 민트 외곽 렌더링 비교';}finally{model?.close();}
+</script></html>

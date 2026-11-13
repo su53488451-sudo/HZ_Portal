@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#e6eee9">
+  <title>2 · WHAT REMAINS — 움직임의 잔상</title>
+  <meta name="description" content="당신의 10초가 하나의 형태로 남는 참여형 미디어아트.">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body data-state="idle" data-design="2">
+  <canvas id="art" aria-label="몸짓이 겹쳐 만들어지는 추상 포스터"></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+  <header class="masthead">
+    <ol class="steps" aria-label="체험 순서">
+      <li><span>01</span>손을 들어 시작</li>
+      <li><span>02</span>10초의 움직임</li>
+      <li><span>03</span>내 잔상 확인</li>
+    </ol>
+  </header>
+  <button id="operator-open" type="button" aria-controls="operator-panel" aria-expanded="false">운영 설정</button>
+
+  <main>
+    <section id="intro" class="intro" aria-labelledby="title">
+      <h1 id="title" class="wordmark"><span>WHAT</span><strong>REMAINS</strong></h1>
+      <p class="korean-title">움직임의 잔상</p>
+      <div class="invitation">
+        <div id="gesture-cue" class="gesture-cue">한 손을 머리 위로 들어 주세요</div>
+        <p class="instruction">시작되면 <strong>10초 동안</strong> 편하게 움직여 주세요</p>
+      </div>
+      <div id="gesture-progress" class="gesture-progress" role="progressbar" aria-label="손 들기 인식" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><div></div><span>손을 잠시 유지해 주세요</span></div>
+      <div id="status" class="status" role="status"><span class="status-dot"></span><span id="status-text">전시를 준비하고 있습니다</span></div>
+    </section>
+
+    <section id="recording" class="recording" aria-label="움직임 기록" hidden>
+      <div class="capture-label"><span class="live-dot"></span> 움직임을 남기는 중</div>
+      <div id="countdown" class="countdown" role="timer" aria-label="남은 시간">10</div>
+      <p id="record-hint">손을 내려도 괜찮아요. 두 손과 상체를 편하게 움직여 주세요.</p>
+      <div class="time-track"><div id="time-fill"></div></div>
+    </section>
+
+    <section id="saving" class="saving" role="status" hidden><span class="saving-dot"></span><h2>당신의 움직임을 포스터에 담고 있어요</h2><p>잠시만 기다려 주세요.</p></section>
+    <section id="result" class="result" hidden aria-live="polite">
+      <h2 class="wordmark" aria-label="WHAT REMAINS"><span aria-hidden="true"><i data-char="W">W</i><i data-char="H">H</i><i data-char="A">A</i><i data-char="T">T</i></span><strong aria-hidden="true"><i data-char="R">R</i><i data-char="E">E</i><i data-char="M">M</i><i data-char="A">A</i><i data-char="I">I</i><i data-char="N">N</i><i data-char="S">S</i></strong></h2>
+      <p class="korean-title">움직임의 잔상</p>
+      <div class="poster-meta" aria-hidden="true">COLLECTIVE MOTION<br>10 SEC / MANY TRACES</div>
+      <div class="scan scan-a" aria-hidden="true"></div><div class="scan scan-b" aria-hidden="true"></div>
+      <div id="trace-label" class="trace-label" hidden>방금 남긴 나의 잔상</div>
+      <p id="result-copy" class="result-copy">내 움직임이 포스터에 더해졌어요. 잠시 감상해 주세요.</p>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="work-caption"><span>몸짓은 사라져도<br>형태는 남는다.</span></div>
+    <div class="archive" aria-label="누적 참여 인원"><span id="total">0000</span><span>누적 참여 인원</span></div>
+  </footer>
+  <aside id="operator-panel" class="operator-panel" hidden aria-label="운영자 준비 화면">
+    <button id="operator-close" class="operator-close" type="button" aria-label="운영 설정 닫기">닫기</button>
+    <h2>전시를 시작할까요?</h2>
+    <div class="live-status"><span id="ready-dot"></span><span id="ready-label">준비 전</span></div>
+    <p class="setup-help">① 카메라·소리 연결 → ② 권한 허용 → ③ 준비 완료<br>연결되면 안내 화면으로 돌아갑니다. 관객은 손짓만으로 참여해요.</p>
+    <p id="operator-status" role="status">아래 버튼으로 카메라와 소리를 연결해 주세요.</p>
+    <button id="operator-connect" class="operator-connect" type="button">카메라·소리 연결</button>
+    <button id="music-toggle" class="operator-secondary" type="button" aria-pressed="true">배경음악 끄기</button>
+    <p id="music-status" class="operator-note" role="status">카메라·소리 연결 시 음악이 시작됩니다.</p>
+    <p class="operator-note">Music: Iridescent Deep · Tsorthan Grove · <a href="https://opengameart.org/content/iridescent-deep" target="_blank" rel="noopener">CC0</a></p>
+    <button id="operator-rehearse" class="operator-secondary" type="button">움직임 예시로 10초 리허설</button>
+    <p class="operator-note">리허설은 카메라 없이 가상 움직임으로 확인하며 참여 기록에 저장하지 않습니다.</p>
+    <div id="camera-preview" class="camera-preview" hidden><video id="webcam" autoplay playsinline muted></video><canvas id="pose-preview"></canvas><span id="camera-label">카메라 준비 중</span></div>
+    <button id="operator-reset" class="operator-secondary" type="button">이 버전 기록 초기화 · R</button>
+    <nav class="edition-links"><a href="./version-2.html">02 · MINT TYPE</a><a href="./version-5.html">05 · CHROMATIC</a></nav>
+    <p class="operator-note">R은 현재 버전의 참여 기록을 모두 지웁니다. 되돌릴 수 없습니다.</p>
+    <p class="operator-note">단축키: R 기록 초기화 · Enter 연결 · O 설정 · Esc 닫기 · F11 전체 화면</p>
+    <p class="operator-note">웹캠 원본 영상·음성은 저장하지 않아요. 움직임 좌표와 몸의 외곽 데이터만 이 브라우저에 보관합니다.</p>
+    <p class="operator-note">최초 카메라 권한 허용과 소리 활성화는 운영자가 한 번 진행합니다.<br>이후 참여자는 손짓만 사용합니다.</p>
+  </aside>
+  <p id="notice" class="notice" role="status" hidden></p>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>

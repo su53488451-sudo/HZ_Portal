@@ -181,12 +181,12 @@ export function ambient(ctx,w,h,t=0){
 export function background(ctx,w,h){
   const g=ctx.createLinearGradient(0,0,w,h);g.addColorStop(0,'#081324');g.addColorStop(.5,'#0c1026');g.addColorStop(1,'#071724');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
 }
-export function grain(ctx,w,h){
+export function grain(ctx,w,h,opacity=.065){
   if(!noiseTile){
     noiseTile=document.createElement('canvas');noiseTile.width=noiseTile.height=192;const c=noiseTile.getContext('2d'),im=c.createImageData(192,192);let seed=4831;
     for(let i=0;i<im.data.length;i+=4){seed=(seed*1664525+1013904223)>>>0;const v=seed>>>24;im.data[i]=im.data[i+1]=im.data[i+2]=v;im.data[i+3]=255;}c.putImageData(im,0,0);
   }
-  ctx.save();ctx.globalCompositeOperation='soft-light';ctx.globalAlpha=.065;ctx.fillStyle=ctx.createPattern(noiseTile,'repeat');ctx.fillRect(0,0,w,h);ctx.restore();
+  ctx.save();ctx.globalCompositeOperation='soft-light';ctx.globalAlpha=opacity;ctx.fillStyle=ctx.createPattern(noiseTile,'repeat');ctx.fillRect(0,0,w,h);ctx.restore();
 }
 
 

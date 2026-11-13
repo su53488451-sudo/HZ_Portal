@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {captureFrame,createMotionRecord,poseAt,playbackTime,loopOpacity,demoFrames} from './motion.mjs';
 test('stores the full 10 second sequence, preserving early and late movement after serialization',()=>{
  const r=createMotionRecord(demoFrames(),0),saved=structuredClone(r);
- assert.equal(r.version,5);assert.equal(r.duration,10000);assert.equal(r.frames.length,126);
+ assert.equal(r.version,7);assert.equal(r.duration,10000);assert.equal(r.frames.length,126);
  assert.notDeepEqual(poseAt(saved,1000),poseAt(saved,7000));assert.equal(playbackTime(saved,11000),1000);
  assert.deepEqual(poseAt(saved,playbackTime(saved,11000)),poseAt(r,1000));
 });

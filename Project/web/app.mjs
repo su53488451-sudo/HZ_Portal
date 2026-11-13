@@ -1,95 +1,140 @@
-import {renderRecord,usablePose,clamp} from './art.mjs';
-import {DURATION,SAMPLE_MS,captureFrame,createMotionRecord,playbackTime,loopOpacity,renderMotion,demoFrames} from './motion.mjs';
-import {scene,loadScene} from './scene.mjs';
+import {usablePose,clamp,grain} from './art.mjs';
+import {DURATION,SAMPLE_MS,captureFrame,createMotionRecord,validMotionRecord,playbackTime,loopOpacity,renderBody,demoFrames} from './motion.mjs';
+import {imprintPlacement,loadImprint} from './imprint.mjs';
+import {PLAYBACK_RATE,replayElapsed} from './motion.mjs';
+import {ExhibitionSoundtrack,SOUNDTRACK} from './soundtrack.mjs';
+import {mountPosterTitle} from './poster-title.mjs';
+import {packSilhouette} from './silhouette.mjs';
+import {cameraMessage,withTimeout} from './reliability.mjs';
+import {scene,loadScene,posterBounds} from './scene.mjs';
+import {MovingArchive} from './archive.mjs';
 import {createHandGate} from './interaction.mjs';
 const $=id=>document.getElementById(id),canvas=$('art'),ctx=canvas.getContext('2d');
-const plate=document.createElement('canvas'),pc=plate.getContext('2d');
+const edition=document.body.dataset.design||'2',archive=new MovingArchive(edition);
+if(edition==='2')mountPosterTitle(document.querySelector('#result .wordmark'));
+let epoch=0,resetting=false,posterEpoch=performance.now();
 const motionLayer=document.createElement('canvas'),mc=motionLayer.getContext('2d');
 const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 const params=new URLSearchParams(location.search),previewMode=params.has('preview'),testMode=params.has('test');
-const gate=createHandGate();
-let w=innerWidth,h=innerHeight,dpr=1,records=[],db,storageReady=false,state='idle',landmarker,stream,loading=false;
+let gate=createHandGate();
+let w=innerWidth,h=innerHeight,dpr=1,records=[],previewRecords=[],db,storageReady=false,state='idle',landmarker,stream,loading=false;
 let pose=null,lastPoseAt=0,frames=[],startAt=0,lastSample=-Infinity,lastCount=11,lastVideo=-1,lastInfer=0;
-let audio,sound=false,returnTimer,latest=null,revealAt=0,lastPaint=0,brightness=0,rehearsal=false,qaFixture=false;
-const ACTIVE_LIMIT=6;
-function activeRecords(){return records.filter(r=>r.frames?.length).slice(-ACTIVE_LIMIT);}
+let audio,sound=false,soundtrack,returnTimer,latest=null,revealAt=0,lastPaint=0,brightness=0,rehearsal=false,qaFixture=false;
+let trackingLostAt=null,cameraIssue='',storageIssue='',resizeTimer,saveFailureForQA=false,qaGestureReady=false;
+let artworkReady=edition!=='2',artworkIssue='';
+
 function showNotice(message){$('notice').textContent=message;$('notice').hidden=false;clearTimeout(showNotice.timer);showNotice.timer=setTimeout(()=>$('notice').hidden=true,6000);}
-function status(message,type=''){$('status-text').textContent=message;$('status').className=`status ${type}`;$('status').hidden=type==='ready';}
-function ready(){return !!landmarker&&!!stream&&sound&&audio?.state==='running'&&storageReady;}
+function status(message,type=''){if($('status-text').textContent!==message)$('status-text').textContent=message;$('status').className=`status ${type}`;$('status').hidden=false;}
+function ready(){return artworkReady&&!loading&&!resetting&&storageReady&&((testMode&&qaGestureReady)||(!!landmarker&&stream?.getVideoTracks().some(t=>t.readyState==='live')&&sound&&audio?.state==='running'));}
 function updateReady(){
   const active=ready();$('ready-dot').className=active?'ready':'';$('ready-label').textContent=active?'체험 준비 완료':'준비 전';
-  $('operator-status').textContent=`카메라 ${landmarker?'연결됨':'미연결'} · 소리 ${sound&&audio?.state==='running'?'켜짐':'연결 필요'} · 기록 ${storageReady?'준비됨':'미연결'}`;
-  if(state==='idle')status(active?'화면 앞에 서서, 두 손과 상체를 보여 주세요.':'전시를 준비하고 있습니다',active?'ready':'');
+  $('operator-status').textContent=artworkIssue||cameraIssue||storageIssue||`카메라 ${landmarker?'연결됨':'미연결'} · 소리 ${sound&&audio?.state==='running'?'켜짐':'연결 필요'} · 기록 ${storageReady?'준비됨':'미연결'}`;
+  document.body.dataset.ready=String(!!active);
+  if(state==='idle'){
+    $('gesture-cue').textContent='한 손을 머리 위로 들어 주세요';
+    status(active?'화면 앞에 한 분씩 서 주세요. 두 손과 상체가 보이면 준비 완료!':cameraIssue||storageIssue?'연결 확인이 필요해요. 운영자에게 알려 주세요.':'운영자가 카메라와 소리를 연결하면 시작할 수 있어요.',active?'ready':'waiting');
+  }
 }
-function setState(next){state=next;document.body.dataset.state=next;$('intro').hidden=next!=='idle';$('recording').hidden=next!=='recording';$('result').hidden=!['result','poster'].includes(next);$('gesture-progress').hidden=true;}
+function setState(next){state=next;soundtrack?.setRecording(next==='recording');document.body.dataset.state=next;$('intro').hidden=next!=='idle';$('recording').hidden=next!=='recording';$('saving').hidden=next!=='saving';$('result').hidden=!['result','poster'].includes(next);$('gesture-progress').hidden=true;}
+async function prepareArtwork(){
+  if(edition!=='2')return true;
+  try{await loadImprint();artworkReady=true;artworkIssue='';return true;}
+  catch(e){console.error(e);artworkReady=false;artworkIssue='잔상 원본을 불러오지 못했어요. 연결 버튼으로 다시 시도해 주세요.';updateReady();return false;}
+}
+function updateMusic(){
+  if($('music-toggle')){$('music-toggle').textContent=soundtrack?.muted?'배경음악 켜기':'배경음악 끄기';$('music-toggle').setAttribute('aria-pressed',String(!soundtrack?.muted));}
+  if($('music-status'))$('music-status').textContent=soundtrack?.error?'음악을 불러오지 못했어요. 카운트 소리와 체험은 계속 사용할 수 있어요.':soundtrack?.playing?`${SOUNDTRACK.title} · ${soundtrack.muted?'음소거':'재생 중'}`:'카메라·소리 연결 시 음악이 시작됩니다.';
+}
 function updateCount(){$('total').textContent=String(records.length).padStart(4,'0');$('total').parentElement.setAttribute('aria-label',`누적 참여 인원 ${records.length}명`);}
 function resizeLayer(c){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);c.getContext('2d').setTransform(dpr,0,0,dpr,0,0);}
-function rebuild(){pc.clearRect(0,0,w,h);const active=new Set(activeRecords());for(const r of records)if(!active.has(r))renderRecord(pc,r,w,h,.16);}
-function resize(){w=innerWidth;h=innerHeight;dpr=Math.min(devicePixelRatio||1,1.5);[canvas,plate].forEach(resizeLayer);motionLayer.width=Math.min(1000,Math.round(w));motionLayer.height=Math.round(h/w*motionLayer.width);rebuild();}
+function rebuild(){const b=posterBounds(w,h,edition);return archive.build(previewMode?previewRecords:records,b.width,b.height);}
+function resize(){w=innerWidth;h=innerHeight;dpr=Math.min(devicePixelRatio||1,1.5);resizeLayer(canvas);const b=posterBounds(w,h,edition);motionLayer.width=Math.min(1000,Math.round(b.width));motionLayer.height=Math.round(b.height/b.width*motionLayer.width);clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(!resetting)rebuild().catch(renderFailed);},180);}
+function renderFailed(e){console.error(e);showNotice('포스터를 표시하지 못했어요. 저장된 기록은 유지됩니다. 새로고침해 주세요.');}
 async function storage(){
   try{
     // A new edition starts at zero once; refreshing must retain new participants.
     // The previous forms-of-presence-v1 archive remains untouched.
-    db=await new Promise((resolve,reject)=>{const r=indexedDB.open(testMode?'what-remains-motion-qa':'what-remains-motion-v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('forms',{keyPath:'id'});r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+    storageReady=false;storageIssue='';db?.close();
+    db=await withTimeout(new Promise((resolve,reject)=>{const r=indexedDB.open(`what-remains-edition-${edition}-${testMode?'qa':'live'}-v2`,1);r.onupgradeneeded=()=>r.result.createObjectStore('forms',{keyPath:'id'});r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);}),8000,late=>late.close());
     records=await new Promise((resolve,reject)=>{const r=db.transaction('forms').objectStore('forms').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
-    records.sort((a,b)=>a.created-b.created);storageReady=true;
-  }catch(e){console.error(e);showNotice('기록 저장 공간을 사용할 수 없습니다. 운영자 확인이 필요합니다.');}
-  updateCount();rebuild();updateReady();
+    const count=records.length;records=records.filter(validMotionRecord);records.sort((a,b)=>a.created-b.created);
+    if(count!==records.length)showNotice('읽을 수 없는 기록을 제외하고 정상 기록을 복원했습니다.');
+    await rebuild();storageReady=true;
+    db.onversionchange=()=>{db.close();storageReady=false;storageIssue='저장 공간이 다른 창에서 변경되었습니다. 새로고침해 주세요.';updateReady();};
+  }catch(e){console.error(e);storageReady=false;storageIssue='기록 저장 공간을 열지 못했어요. 다른 전시 탭을 닫고 다시 연결해 주세요.';showNotice(storageIssue);}
+  updateCount();updateReady();
 }
-function persist(record){return new Promise((resolve,reject)=>{if(!db)return reject(new Error('저장 공간 연결 실패'));const tx=db.transaction('forms','readwrite');tx.objectStore('forms').add(record);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});}
+function persist(record){return new Promise((resolve,reject)=>{if(!db||saveFailureForQA)return reject(new Error('저장 공간 연결 실패'));const tx=db.transaction('forms','readwrite');const timeout=setTimeout(()=>tx.abort(),8000);tx.objectStore('forms').add(record);tx.oncomplete=()=>{clearTimeout(timeout);resolve();};tx.onerror=tx.onabort=()=>{clearTimeout(timeout);reject(tx.error||new Error('저장 중단'));};});}
 async function unlockSound(){
-  try{audio??=new AudioContext();await audio.resume();sound=audio.state==='running';audio.onstatechange=()=>{sound=audio.state==='running';updateReady();};return sound;}
+  try{audio??=new AudioContext();await withTimeout(audio.resume(),5000);sound=audio.state==='running';audio.onstatechange=()=>{sound=audio.state==='running';if(!sound&&state==='recording'){reset();showNotice('소리 연결이 잠시 끊겼어요. 운영 설정에서 다시 연결해 주세요.');}updateReady();};return sound;}
   catch(e){console.error(e);sound=false;return false;}
-  finally{updateReady();}
+  finally{if(sound){soundtrack??=new ExhibitionSoundtrack(audio);soundtrack.setRecording(state==='recording');void soundtrack.start().then(updateMusic);}updateReady();}
 }
 function tone(f=440,length=.12,delay=0){if(!sound||!audio||audio.state!=='running')return;const o=audio.createOscillator(),g=audio.createGain(),t=audio.currentTime+delay;o.type='sine';o.frequency.value=f;g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.085,t+.012);g.gain.exponentialRampToValueAtTime(.001,t+length);o.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+length+.02);}
 async function camera(){
-  if(landmarker&&stream)return true;if(loading)return false;loading=true;
+  if(landmarker&&stream?.getVideoTracks().some(t=>t.readyState==='live'))return true;if(loading)return false;loading=true;cameraIssue='';
   status('움직임을 만날 준비를 하고 있습니다…');$('operator-status').textContent='카메라와 움직임 인식을 준비하고 있습니다…';
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'},audio:false});
-    $('webcam').srcObject=stream;await $('webcam').play();$('camera-preview').hidden=false;
+    stream=await withTimeout(navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'},audio:false}),25000,late=>late.getTracks().forEach(t=>t.stop()));
+    $('webcam').srcObject=stream;await withTimeout($('webcam').play(),8000);$('camera-preview').hidden=false;
     const {FilesetResolver,PoseLandmarker}=await import('./assets/vision_bundle.mjs');
-    const vision=await FilesetResolver.forVisionTasks('./assets/wasm');
-    const config={baseOptions:{modelAssetPath:'./assets/pose_landmarker_lite.task',delegate:'GPU'},runningMode:'VIDEO',numPoses:1,minPoseDetectionConfidence:.55,minTrackingConfidence:.55};
-    try{landmarker=await PoseLandmarker.createFromOptions(vision,config);}catch{config.baseOptions.delegate='CPU';landmarker=await PoseLandmarker.createFromOptions(vision,config);}
+    const vision=await withTimeout(FilesetResolver.forVisionTasks('./assets/wasm'),20000);
+    const config={baseOptions:{modelAssetPath:'./assets/pose_landmarker_lite.task',delegate:'GPU'},runningMode:'VIDEO',numPoses:1,outputSegmentationMasks:edition==='2',minPoseDetectionConfidence:.55,minTrackingConfidence:.55};
+    try{landmarker=await withTimeout(PoseLandmarker.createFromOptions(vision,config),20000,late=>late.close());}catch{config.baseOptions.delegate='CPU';landmarker=await withTimeout(PoseLandmarker.createFromOptions(vision,config),20000,late=>late.close());}
     lastVideo=-1;stream.getVideoTracks()[0].addEventListener('ended',()=>cameraFailed('카메라 연결이 끊겼습니다. Enter 키로 다시 연결해 주세요.'));
     updateReady();if(ready())setOperator(false);return true;
-  }catch(e){console.error(e);cameraFailed(e.name==='NotAllowedError'?'카메라 권한을 허용한 뒤 Enter 키를 눌러 주세요.':'카메라 연결에 실패했습니다. Enter 키로 다시 시도해 주세요.');return false;}
-  finally{loading=false;}
+  }catch(e){console.error(e);cameraFailed(cameraMessage(e));return false;}
+  finally{loading=false;updateReady();}
 }
-function cameraFailed(message){landmarker?.close();landmarker=null;stream?.getTracks().forEach(t=>t.stop());stream=null;pose=null;$('camera-preview').hidden=true;if(state==='recording')reset();updateReady();$('operator-status').textContent=message;status('카메라를 준비 중입니다. 잠시만 기다려 주세요.','error');}
+function cameraFailed(message){qaGestureReady=false;cameraIssue=message;landmarker?.close();landmarker=null;stream?.getTracks().forEach(t=>t.stop());stream=null;pose=null;$('webcam').srcObject=null;$('camera-preview').hidden=true;if(state==='recording')reset();updateReady();setOperator(true);}
 function begin(){
-  if(!ready()||state!=='idle'||!$('operator-panel').hidden)return;
+  if(!ready()||state!=='idle'||resetting||!$('operator-panel').hidden)return;
   startCapture(false);
 }
 function startCapture(isRehearsal){
+  if(resetting||state==='saving'||state==='recording')return;
   clearTimeout(returnTimer);rehearsal=isRehearsal;document.body.dataset.rehearsal=String(rehearsal);
   frames=[];lastSample=-Infinity;startAt=performance.now();lastCount=11;latest=null;
-  $('record-hint').textContent='천천히, 크게. 당신만의 움직임을 남겨 주세요.';setState('recording');
+  trackingLostAt=null;$('countdown').textContent='10';$('time-fill').style.transform='scaleX(1)';
+  $('record-hint').textContent='손을 내려도 괜찮아요. 두 손과 상체를 편하게 움직여 주세요.';setState('recording');
 }
 async function finish(){
   if(state!=='recording')return;
+  const token=epoch;
   const record=createMotionRecord(frames,records.length);
+  if(edition==='2'&&!rehearsal&&!qaFixture&&frames.filter(f=>f.shape).length<frames.length*.65){reset();showNotice('몸의 윤곽을 충분히 읽지 못했어요. 주변을 밝게 하고 두 손과 상체가 보이게 다시 시작해 주세요.');return;}
   if(!record){reset();showNotice('움직임을 충분히 읽지 못했어요. 두 손과 상체가 보이게 다시 시작해 주세요.');return;}
   setState('saving');
+  let stored=false;
   try{
-    if(!rehearsal){await persist(record);records.push(record);updateCount();rebuild();}
+    if(!rehearsal){await persist(record);if(token!==epoch)return;stored=true;records.push(record);updateCount();await rebuild();}
+    if(token!==epoch)return;posterEpoch=performance.now()+(record.index||0)*997/PLAYBACK_RATE;
     latest=record;revealAt=performance.now();setState('result');
-    $('result-copy').textContent=rehearsal?'리허설: 예시 움직임을 재생합니다.':`${records.length}번째 몸짓의 10초를 무빙 포스터로 재생합니다.`;
+    $('result-copy').textContent=rehearsal?'예시 움직임이에요. 실제 참여 기록에는 저장되지 않아요.':'내 움직임이 포스터에 더해졌어요. 잠시 감상해 주세요.';
+    const position=imprintPlacement(record.index||0),bounds=posterBounds(w,h,edition);$('trace-label').style.left=(bounds.x+position.x*bounds.width)+'px';$('trace-label').style.top=(bounds.y+Math.min(.83,position.y+.17)*bounds.height)+'px';$('trace-label').hidden=edition!=='2';
     tone(523,.6);tone(659,.7,.12);tone(784,.9,.24);returnTimer=setTimeout(reset,22000);
-  }catch(e){console.error(e);reset();showNotice('기록을 저장하지 못했습니다. 운영자 확인이 필요합니다.');}
+  }catch(e){if(token!==epoch)return;console.error(e);reset();if(stored)renderFailed(e);else showNotice('기록을 저장하지 못했어요. 참여 인원은 추가되지 않았습니다. 운영자에게 알려 주세요.');}
 }
-function reset(){clearTimeout(returnTimer);latest=null;frames=[];rehearsal=false;qaFixture=false;document.body.dataset.rehearsal='false';setState('idle');updateReady();}
-function samplePose(p,now){
-  pose=p;const valid=usablePose(p);
+async function clearArchive(){
+  if(resetting||!db)return;
+  resetting=true;epoch++;reset();gate=createHandGate();archive.clear();
+  try{
+    await new Promise((resolve,reject)=>{const tx=db.transaction('forms','readwrite');tx.objectStore('forms').clear();tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);});
+    records=[];archive.clear();updateCount();showNotice('이 버전의 참여 기록을 초기화했습니다 · 0명');
+  }catch(e){console.error(e);await storage();showNotice('초기화하지 못했습니다. 저장 공간을 확인해 주세요.');}
+  finally{resetting=false;updateReady();}
+}
+function reset(){epoch++;clearTimeout(returnTimer);latest=null;frames=[];trackingLostAt=null;rehearsal=false;qaFixture=false;$('trace-label').hidden=true;document.body.dataset.rehearsal='false';setState('idle');updateReady();}
+function samplePose(p,now,mask=null){
+  pose=p;const valid=!!captureFrame(p,0);
   if(valid){lastPoseAt=now;$('camera-label').textContent=state==='recording'?'움직임을 기록하고 있어요':'두 손과 상체 인식 중';
-    if(state==='recording'&&!rehearsal&&now-lastSample>=SAMPLE_MS){const f=captureFrame(p,now-startAt);if(f){frames.push(f);lastSample=now;}}
+    if(state==='recording'&&!rehearsal&&now-lastSample>=SAMPLE_MS){const f=captureFrame(p,now-startAt);if(f){if(mask)f.shape=packSilhouette(mask.getAsFloat32Array(),mask.width,mask.height,$('webcam').videoWidth/$('webcam').videoHeight||4/3);frames.push(f);lastSample=now;}}
   }else $('camera-label').textContent='두 손과 상체가 보이게 서 주세요';
   const eligible=state==='idle'&&ready()&&$('operator-panel').hidden;
-  const gesture=gate.update(p,now,eligible);
+  const gesture=gate.update(p,now,eligible&&valid);
   $('gesture-progress').hidden=gesture.progress===0||!eligible;$('gesture-progress').firstElementChild.style.width=`${gesture.progress*100}%`;
-  if(eligible)status(valid?'좋아요. 한 손을 머리 위로 들어 주세요.':'화면 앞에 서서, 두 손과 상체를 보여 주세요.','ready');
+  $('gesture-progress').setAttribute('aria-valuenow',String(Math.round(gesture.progress*100)));
+  if(eligible)status(gesture.progress>0?'좋아요! 손을 조금만 더 들고 계세요.':valid?'준비됐어요. 한 손을 머리 위로 들어 주세요.':'화면 앞에 한 분씩 서서, 두 손과 상체를 보여 주세요.',valid?'ready':'waiting');
   if(gesture.start)begin();
   if(!$('operator-panel').hidden)drawPose(p);
 }
@@ -103,32 +148,36 @@ function frame(now){
   requestAnimationFrame(frame);if(document.hidden)return;
   if(landmarker&&$('webcam').readyState>=2&&now-lastInfer>65&&$('webcam').currentTime!==lastVideo){
     lastVideo=$('webcam').currentTime;lastInfer=now;
-    try{samplePose(landmarker.detectForVideo($('webcam'),now).landmarks[0]||null,now);}catch(e){console.error(e);cameraFailed('움직임 인식이 중단됐습니다. Enter 키로 다시 준비해 주세요.');}
+    let detection;
+    try{detection=landmarker.detectForVideo($('webcam'),now);samplePose(detection.landmarks[0]||null,now,detection.segmentationMasks?.[0]);}catch(e){console.error(e);cameraFailed('움직임 인식이 중단됐습니다. Enter 키로 다시 준비해 주세요.');}finally{detection?.close();}
   }
   if(state==='recording'){
     const elapsed=now-startAt,count=Math.max(0,Math.ceil((DURATION-elapsed)/1000));
     if(rehearsal||qaFixture)frames=demoFrames().filter(f=>f.t<=Math.min(elapsed,DURATION));
     if(count!==lastCount){lastCount=count;$('countdown').textContent=String(count).padStart(2,'0');if(count>0)tone(count<=3?660:392,.12);}
     $('time-fill').style.transform='scaleX('+clamp(1-elapsed/DURATION)+')';
-    if(!rehearsal)$('record-hint').textContent=now-lastPoseAt>600?'두 손과 상체가 보이게 움직여 주세요.':'천천히, 크게. 당신만의 움직임을 남겨 주세요.';
+    if(!rehearsal&&!qaFixture){
+      const lost=now-lastPoseAt>600;trackingLostAt=lost?(trackingLostAt??now):null;
+      $('record-hint').textContent=lost?'잠깐, 움직임이 안 보여요. 두 손과 상체를 화면 안으로 보여 주세요.':elapsed>7000?'좋아요! 끝까지 편하게 움직여 주세요.':'손을 내려도 괜찮아요. 두 손과 상체를 편하게 움직여 주세요.';
+      $('recording').dataset.tracking=lost?'lost':'ok';
+      if(trackingLostAt&&now-trackingLostAt>3000){reset();showNotice('움직임을 놓쳤어요. 화면 앞에서 한 손을 들어 다시 시작해 주세요.');return;}
+    }
     if(elapsed>=DURATION)finish();
   }
   if(now-lastPaint<50)return;
   const dt=Math.min(100,now-lastPaint);lastPaint=now;
   const target=['result','poster'].includes(state)?1:0;
   brightness=reduce?target:brightness+(target-brightness)*(1-Math.exp(-dt/550));
-  scene(ctx,w,h,reduce?0:now,brightness);
-  ctx.save();ctx.globalAlpha=state==='idle'?.32:.6;ctx.drawImage(plate,0,0,w,h);ctx.restore();
+  scene(ctx,w,h,reduce?0:now,brightness,edition);
+  const bounds=posterBounds(w,h,edition);
+  ctx.save();ctx.translate(bounds.x,bounds.y);ctx.beginPath();ctx.rect(0,0,bounds.width,bounds.height);ctx.clip();ctx.globalAlpha=state==='idle'?.48:1;
+  archive.draw(ctx,bounds.width,bounds.height,reduce?5000:replayElapsed(now-posterEpoch));ctx.restore();
   mc.clearRect(0,0,motionLayer.width,motionLayer.height);
-  const active=activeRecords();if(rehearsal&&latest)active.push(latest);
-  for(const r of active){
-    const elapsed=r===latest?now-revealAt:now+(r.seed||0)*100;
-    const t=reduce?(r.frames[0].t+r.frames.at(-1).t)/2:playbackTime(r,elapsed);
-    const fade=reduce?1:loopOpacity(t,r.duration);
-    renderMotion(mc,r,motionLayer.width,motionLayer.height,t,fade*(r===latest?.94:.52));
-  }
-  if(state==='recording'&&frames.length){const draft={frames,palette:records.length%6};renderMotion(mc,draft,motionLayer.width,motionLayer.height,frames.at(-1).t,.9);}
-  ctx.save();ctx.globalAlpha=state==='idle'?.38:1;ctx.drawImage(motionLayer,0,0,w,h);ctx.restore();
+  if(rehearsal&&latest){const t=reduce?5000:playbackTime(latest,replayElapsed(now-revealAt));renderBody(mc,latest,motionLayer.width,motionLayer.height,t,loopOpacity(t),edition);}
+  if(state==='recording'&&frames.length){const draft={frames,index:records.length,capture:edition==='2'&&!rehearsal&&!qaFixture?'silhouette':'pose'};renderBody(mc,draft,motionLayer.width,motionLayer.height,frames.at(-1).t,.8,edition);}
+  ctx.drawImage(motionLayer,bounds.x,bounds.y,bounds.width,bounds.height);
+  grain(ctx,w,h,edition==='2'?.035:.2);
+
 }
 // Pointer controls belong to the operator; visitors still start only with a raised hand.
 function setOperator(open){
@@ -140,6 +189,8 @@ async function prepareExhibition(){
   $('operator-connect').disabled=true;$('operator-connect').textContent='연결 중…';
   try{
     const audible=await unlockSound();if(loading)return;
+    if(!artworkReady){if(!await prepareArtwork()){setOperator(true);return;}await rebuild();}
+    if(!storageReady)await storage();
     const connected=await camera();updateReady();
     if(audible&&connected&&storageReady){setOperator(false);tone(523,.25);}else setOperator(true);
   }finally{$('operator-connect').disabled=false;$('operator-connect').textContent=ready()?'카메라·소리 다시 연결':'카메라·소리 연결';}
@@ -147,9 +198,13 @@ async function prepareExhibition(){
 $('operator-open').onclick=()=>{setOperator(true);updateReady();};
 $('operator-close').onclick=()=>setOperator(false);
 $('operator-connect').onclick=prepareExhibition;
+$('operator-reset').onclick=clearArchive;
 $('operator-rehearse').onclick=async()=>{await unlockSound();setOperator(false);startCapture(true);};
+if($('music-toggle'))$('music-toggle').onclick=()=>{if(soundtrack){soundtrack.setMuted(!soundtrack.muted);updateMusic();}};
 window.addEventListener('keydown',async e=>{
   if(e.repeat||e.altKey||e.ctrlKey||e.metaKey||previewMode)return;
+  if(e.target?.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName))return;
+  if(e.key.toLowerCase()==='r'){e.preventDefault();await clearArchive();return;}
   if(e.key.toLowerCase()==='o'){setOperator($('operator-panel').hidden);updateReady();}
   if(e.key==='Escape')setOperator(false);
   if(e.key==='Enter'){
@@ -158,17 +213,28 @@ window.addEventListener('keydown',async e=>{
   }
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&state==='recording')reset();});
-window.addEventListener('pagehide',()=>{stream?.getTracks().forEach(t=>t.stop());landmarker?.close();});
-window.addEventListener('resize',resize);resize();await Promise.all([storage(),loadScene().catch(e=>console.warn('기본 배경 대신 단색 배경으로 표시합니다.',e))]);
+window.addEventListener('pagehide',()=>{stream?.getTracks().forEach(t=>t.stop());landmarker?.close();soundtrack?.dispose();});
+window.addEventListener('resize',resize);resize();await Promise.all([prepareArtwork(),loadScene().catch(e=>console.warn('기본 배경 대신 단색 배경으로 표시합니다.',e))]);if(!previewMode)await storage();
 if(testMode)showNotice('동작 검증 모드 · 전시 기록과 분리해 저장합니다.');
 if(previewMode){
-  const r=createMotionRecord(demoFrames(),0);latest=r;revealAt=performance.now();rehearsal=true;
-  document.body.dataset.rehearsal='true';setState('poster');setOperator(false);rebuild();
-}else setOperator(true);
+  const count=clamp(Number(params.get('preview'))||1,1,8),demo=demoFrames();
+  previewRecords=Array.from({length:count},(_,i)=>({...createMotionRecord(demo.map((f,j)=>({t:f.t,points:demo[(j+i*19)%demo.length].points})),i),seed:i*.137}));
+  latest=null;rehearsal=true;await rebuild();posterEpoch=performance.now();
+  document.body.dataset.rehearsal='true';setState('poster');setOperator(false);
+}else setOperator(!params.has('review'));
 if(testMode)window.motionQA={
+  motionPixels:()=>{const b=posterBounds(w,h,edition),c=document.createElement('canvas');c.width=Math.min(640,Math.round(b.width));c.height=Math.round(c.width*b.height/b.width);const context=c.getContext('2d');archive.draw(context,c.width,c.height,replayElapsed(performance.now()-posterEpoch));return {width:c.width,height:c.height,data:context.getImageData(0,0,c.width,c.height).data};},
+  soundSnapshot:()=>({context:audio?.state,playing:soundtrack?.playing,duration:soundtrack?.buffer?.duration,muted:soundtrack?.muted,volume:soundtrack?.volume,recording:soundtrack?.recording,error:soundtrack?.error?.message}),
+  clear:clearArchive,
+  failSaving:value=>{saveFailureForQA=value;},
+  prepareGesture:()=>{qaGestureReady=true;qaFixture=true;gate=createHandGate();setOperator(false);updateReady();},
+  startWithoutTracking:()=>{qaGestureReady=true;qaFixture=false;setOperator(false);startCapture(false);lastPoseAt=performance.now();},
+  loseCamera:()=>cameraFailed(cameraMessage({name:'NotReadableError'})),
+  sample:(p,now)=>samplePose(p,now),
+  edition,
   start:()=>{setOperator(false);startCapture(true);},
   startFixture:()=>{setOperator(false);qaFixture=true;startCapture(false);},
-  snapshot:()=>({state,count:records.length,frames:frames.length,latest:latest&&{version:latest.version,duration:latest.duration,frames:latest.frames.length},rehearsal}),
+  snapshot:()=>({state,edition,cachedPhases:archive.layers.length,count:records.length,frames:frames.length,latest:latest&&{version:latest.version,duration:latest.duration,frames:latest.frames.length},rehearsal}),
   readSaved:()=>new Promise((resolve,reject)=>{const r=db.transaction('forms').objectStore('forms').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);})
 };
 requestAnimationFrame(frame);
