@@ -1,0 +1,5 @@
+# Intentionally kept off the public repository.
+/수업자료/
+
+# Separate checkout of the GitHub Pages deployment branch.
+/Project/deploy-github/

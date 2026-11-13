@@ -1,0 +1,24 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><title>잔상 렌더링 검사</title>
+<style>body{background:#0c1427;color:#e9ecf8;font:16px sans-serif;padding:30px}canvas{max-width:100%}li{margin:15px 0}</style>
+<h1>잔상 렌더링 검사</h1><ul id="results"></ul><canvas id="sample" width="800" height="450"></canvas>
+<script type="module">
+import {ambient,background,grain,livingLight,loadPoster,renderRecord,createRecord} from './art.mjs';
+const output=document.querySelector('#results'),canvas=document.querySelector('#sample'),ctx=canvas.getContext('2d',{willReadFrequently:true});
+const read=()=>ctx.getImageData(0,0,800,450).data;
+const differences=(a,b)=>{let changed=0;for(let i=0;i<a.length;i+=4)if(Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2])>2)changed++;return changed;};
+const check=(name,pass)=>{const li=document.createElement('li');li.textContent=`${pass?'PASS':'FAIL'} · ${name}`;output.append(li);if(!pass)throw new Error(name);};
+function opening(t){background(ctx,800,450);ambient(ctx,800,450,t);grain(ctx,800,450);return read();}
+await loadPoster();
+const a=opening(1000),b=opening(16000);
+check('대기 포스터의 빛이 시간에 따라 변함',differences(a,b)>500);
+const still=opening(0),stillAgain=opening(0);
+check('동작 줄이기: 정지 프레임이 동일함',differences(still,stillAgain)===0);
+const plate=document.createElement('canvas');plate.width=800;plate.height=450;
+const record=createRecord([[{x:.15,y:.8},{x:.25,y:.35},{x:.42,y:.55},{x:.7,y:.3}]],null,0);
+const before=JSON.stringify(record);renderRecord(plate.getContext('2d'),record,800,450);
+function recorded(t){background(ctx,800,450);livingLight(ctx,plate,800,450,t);return read();}
+check('참여자가 만든 잔상에도 빛 흐름이 적용됨',differences(recorded(1000),recorded(16000))>500);
+check('대기 모션이 참여 좌표나 기록을 변경하지 않음',before===JSON.stringify(record));
+opening(16000);
+document.title='PASS · 잔상 렌더링 검사 4개';
+</script></html>

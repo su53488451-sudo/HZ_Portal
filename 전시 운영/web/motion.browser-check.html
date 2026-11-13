@@ -1,0 +1,97 @@
+<!doctype html><meta charset="utf-8"><title>Moving poster browser checks</title>
+<style>body{background:#102437;color:#e4f0f7;font:15px system-ui;padding:20px}iframe{width:960px;height:540px;border:1px solid #5d8499}li{margin:8px}</style>
+<h1>무빙 포스터 브라우저 검사</h1><p>가상 동작 · QA 저장소만 사용 · 실제 관객 수에 포함하지 않음</p><ol id="results"></ol>
+<iframe id="app" src="/version-2.html?test=1"></iframe>
+<script type="module">
+import {createMotionRecord,demoFrames,renderBody as renderMotion,poseAt} from './motion.mjs';
+import {MovingArchive} from './archive.mjs';
+import {loadImprint} from './imprint.mjs';
+import {packSilhouette} from './silhouette.mjs';
+const out=document.querySelector('#results'),frame=document.querySelector('#app');
+function report(ok,text){const li=document.createElement('li');li.textContent=(ok?'PASS — ':'FAIL — ')+text;out.append(li);if(!ok)throw new Error(text);}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+async function until(fn,timeout=15000){const start=performance.now();while(!fn()){if(performance.now()-start>timeout)throw Error('timeout');await wait(100);}}
+// Compare only visible ink, rather than assuming a fixed-size person or counting
+// the colored lettering in the poster backdrop. Transparent RGB is irrelevant.
+function motionDifference(a,b){
+ let painted=0,changed=0;
+ for(let i=0;i<a.length;i+=4){
+  if(Math.max(a[i+3],b[i+3])<=8)continue;
+  painted++;
+  const aa=a[i+3]/255,ba=b[i+3]/255;
+  const delta=Math.abs(a[i]*aa-b[i]*ba)+Math.abs(a[i+1]*aa-b[i+1]*ba)+Math.abs(a[i+2]*aa-b[i+2]*ba)+Math.abs(a[i+3]-b[i+3]);
+  if(delta>10)changed++;
+ }
+ return {painted,changed,ratio:painted?changed/painted:0};
+}
+async function verifyPreviewMotion(qa,label){
+ await until(()=>qa.snapshot().cachedPhases===60);
+ const a=qa.motionPixels();await wait(1200);const b=qa.motionPixels();
+ const difference=motionDifference(a.data,b.data);
+ report(a.width===b.width&&a.height===b.height&&difference.painted>0&&difference.ratio>.05,label+' · 움직이는 잔상 면적 '+Math.round(difference.ratio*100)+'%');
+}
+try{
+ await loadImprint();
+
+
+ const fixed=demoFrames(),masks=[new Float32Array(160*120),new Float32Array(160*120)];
+ for(let y=20;y<105;y++)for(let x=66;x<94;x++)masks.forEach(m=>m[y*160+x]=1);
+ for(let y=35;y<48;y++)for(let x=20;x<140;x++)masks[0][y*160+x]=1;
+ for(let y=8;y<85;y++)for(let x=55;x<66;x++)masks[1][y*160+x]=1;
+ const testCanvas=document.createElement('canvas');testCanvas.width=640;testCanvas.height=360;
+ const tc=testCanvas.getContext('2d',{willReadFrequently:true});
+ const images=masks.map(m=>{tc.clearRect(0,0,640,360);const shape=packSilhouette(m,160,120);renderMotion(tc,{...createMotionRecord(fixed.map(f=>({...f,shape})),0),seed:.4},640,360,5000);return tc.getImageData(0,0,640,360).data;});
+ report(motionDifference(images[0],images[1]).ratio>.15,'같은 위치·색상에서도 실제 인물의 팔 외곽에 따라 결과가 달라짐');
+ const c=document.createElement('canvas');c.width=640;c.height=360;const ctx=c.getContext('2d',{willReadFrequently:true}),r=createMotionRecord(demoFrames(),0);
+ renderMotion(ctx,r,640,360,1000);const a=ctx.getImageData(0,0,640,360).data;ctx.clearRect(0,0,640,360);renderMotion(ctx,r,640,360,6000);const b=ctx.getImageData(0,0,640,360).data;
+ const difference=motionDifference(a,b);
+ report(difference.painted>0&&difference.ratio>.05,'다른 시점의 실제 잔상 픽셀이 달라짐 (마지막 자세 정지화면 아님)');
+ const batch=Array.from({length:8},(_,i)=>createMotionRecord(demoFrames(),i)),cache=new MovingArchive('5');
+ await cache.build(batch.slice(0,7),240,135);await cache.build(batch,240,135);
+ report(cache.recordCount===8&&cache.layers.length===60,'8명 누적: 최근 6명 제한 없이 모든 기록을 재생 캐시에 합성');
+ const sample=cache.layers[12].getContext('2d').getImageData(0,0,240,135).data;
+ const fresh=new MovingArchive('5');await fresh.build(batch,240,135);const expected=fresh.layers[12].getContext('2d').getImageData(0,0,240,135).data;
+ let delta=0;for(let i=0;i<sample.length;i++)delta+=Math.abs(sample[i]-expected[i]);
+ report(delta/sample.length<1,'새 참여자 추가 후 기존 잔상 보존: 전체 재합성과 픽셀 일치');
+ const pending=cache.build(batch,250,140);cache.clear();await pending;
+ report(cache.layers.length===0,'초기화 뒤 진행 중 캐시 작업이 이전 잔상을 되살리지 않음');
+ const solid=document.createElement('canvas');solid.width=solid.height=8;const sc=solid.getContext('2d');sc.fillStyle='#ff0000';sc.fillRect(0,0,8,8);
+ cache.layers=Array(60).fill(solid);const blended=document.createElement('canvas');blended.width=blended.height=8;const bc=blended.getContext('2d');cache.draw(bc,8,8,83.333);
+ report(bc.getImageData(4,4,1,1).data[3]>=254,'프레임 혼합 중 색과 불투명도가 흐려지지 않음');
+ await until(()=>frame.contentWindow.motionQA);let qa=frame.contentWindow.motionQA;const before=qa.snapshot().count;
+ const hand=Array.from({length:33},()=>({x:.5,y:.5,visibility:.95}));hand[11].x=.4;hand[12].x=.6;hand[15].y=.2;hand[16].y=.8;
+ qa.prepareGesture();qa.sample(hand,0);qa.sample(hand,900);
+ report(qa.snapshot().state==='idle'&&!frame.contentDocument.querySelector('#gesture-progress').hidden,'손을 들면 진행 상태가 보이고 1초 전에는 시작되지 않음');
+ qa.sample(hand,1200);report(qa.snapshot().state==='recording','1.1초 손 들기 → 실제 시작 경로로 체험 진입');
+ await until(()=>qa.snapshot().frames>=30);report(qa.snapshot().state==='recording','기록 중 30개 이상 프레임 누적: '+JSON.stringify(qa.snapshot()));
+ await until(()=>qa.snapshot().state==='result');report(qa.snapshot().latest?.frames>=120&&qa.snapshot().count===before+1,'10초 종료: 120개 이상 동작 프레임 저장, 인원 1 증가');
+ const saved=await qa.readSaved();const record=saved.sort((a,b)=>a.created-b.created).at(-1);
+ report(record.duration===10000&&JSON.stringify(poseAt(record,1000))!==JSON.stringify(poseAt(record,6000)),'IndexedDB에 앞/뒤 움직임과 10초 타임라인 보존');
+ frame.src='/version-2.html?test=1&reload='+Date.now();await until(()=>frame.contentWindow.motionQA&&frame.contentWindow.motionQA!==qa);qa=frame.contentWindow.motionQA;
+ report(qa.snapshot().count===before+1,'새로고침 후 누적 기록 복원');
+ qa.start();await until(()=>qa.snapshot().state==='result');report(qa.snapshot().count===before+1&&qa.snapshot().rehearsal,'리허설은 10초 재생되지만 참여 수와 저장소를 증가시키지 않음');
+ report(qa.snapshot().cachedPhases===60,'이전 참여자의 60개 재생 위상 캐시 복원');
+ frame.contentWindow.dispatchEvent(new frame.contentWindow.KeyboardEvent('keydown',{key:'r',bubbles:true}));
+ await until(()=>qa.snapshot().count===0);report((await qa.readSaved()).length===0&&qa.snapshot().state==='idle','R 키: 기록·인원·재생 초기화');
+ qa.startFixture();await until(()=>qa.snapshot().frames>=5);await qa.clear();await wait(500);
+ report(qa.snapshot().state==='idle'&&qa.snapshot().count===0,'기록 중 R 초기화가 진행 중인 체험을 취소함');
+ frame.src='/version-5.html?test=1';await until(()=>frame.contentWindow.motionQA&&frame.contentWindow.motionQA!==qa);qa=frame.contentWindow.motionQA;
+ await qa.clear();qa.startFixture();await until(()=>qa.snapshot().state==='result');
+ report(qa.snapshot().edition==='5'&&qa.snapshot().count===1&&qa.snapshot().latest.frames>=120,'5번 버전도 전체 10초 동작 저장 및 재생');
+ frame.src='/version-2.html?test=1';await until(()=>frame.contentWindow.motionQA&&frame.contentWindow.motionQA!==qa);qa=frame.contentWindow.motionQA;
+ report(qa.snapshot().count===0,'5번의 참여 기록이 2번과 독립적으로 저장됨');
+ qa.failSaving(true);qa.startFixture();await until(()=>qa.snapshot().state==='idle',16000);
+ report(qa.snapshot().count===0&&(await qa.readSaved()).length===0&&frame.contentDocument.querySelector('#notice').textContent.includes('저장하지 못'),'저장 실패 안내 표시, 인원 증가 없이 다시 대기');qa.failSaving(false);
+ qa.startWithoutTracking();await until(()=>qa.snapshot().state==='idle',6000);
+ report(qa.snapshot().count===0&&frame.contentDocument.querySelector('#notice').textContent.includes('움직임을 놓쳤'),'움직임을 오래 놓치면 빈 포스터를 저장하지 않고 재시도 안내');
+ qa.startFixture();await until(()=>qa.snapshot().frames>=5);qa.loseCamera();
+ report(qa.snapshot().state==='idle'&&!frame.contentDocument.querySelector('#operator-panel').hidden&&frame.contentDocument.querySelector('#operator-status').textContent.includes('다른 앱'),'카메라 중단 시 기록 취소, 운영자 복구 안내 표시');
+ report(!frame.contentDocument.querySelector('#operator-panel').hidden&&getComputedStyle(frame.contentDocument.querySelector('#status')).clipPath!=='none','관객 안내는 간결하게 유지하고 연결 오류는 열린 운영 설정에서 확인');
+ frame.src='/version-2.html?preview=6&test=1';await until(()=>frame.contentWindow.motionQA&&frame.contentWindow.motionQA!==qa);qa=frame.contentWindow.motionQA;
+ await verifyPreviewMotion(qa,'6명 미리보기: 배경 글자를 제외한 실제 잔상이 표시되고 계속 움직임');
+ report(qa.snapshot().count===0,'6명 포스터 미리보기: 실제 참여 수는 0명 유지');
+ frame.style.width='900px';await wait(800);
+ await verifyPreviewMotion(qa,'화면 크기 변경 후에도 예시 잔상이 사라지지 않고 움직임');
+ document.title='PASS — moving poster browser checks';
+}catch(e){const li=document.createElement('li');li.textContent='FAIL — '+e.message;out.append(li);document.title='FAIL — moving poster browser checks';}
+</script>
